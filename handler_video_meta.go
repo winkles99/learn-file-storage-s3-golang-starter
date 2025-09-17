@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
@@ -95,10 +97,21 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	video, err = cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
-		return
+	// If a video file exists, ensure response has a CloudFront URL when legacy format is encountered
+	if video.VideoURL != nil && *video.VideoURL != "" {
+		// Case 1: legacy DB format "bucket,key"
+		parts := strings.SplitN(*video.VideoURL, ",", 2)
+		if len(parts) == 2 {
+			_ = strings.TrimSpace(parts[0])
+			key := strings.TrimSpace(parts[1])
+			publicURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
+			video.VideoURL = &publicURL
+		} else if strings.HasPrefix(*video.VideoURL, "https://LOCAL/") {
+			// Case 2: previously stored LOCAL domain, rewrite to CloudFront
+			path := strings.TrimPrefix(*video.VideoURL, "https://LOCAL/")
+			publicURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, path)
+			video.VideoURL = &publicURL
+		}
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
@@ -122,11 +135,20 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	for i, video := range videos {
-		video, err = cfg.dbVideoToSignedVideo(video)
-		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
-			return
+	for i, v := range videos {
+		video := v
+		if video.VideoURL != nil && *video.VideoURL != "" {
+			parts := strings.SplitN(*video.VideoURL, ",", 2)
+			if len(parts) == 2 {
+				_ = strings.TrimSpace(parts[0])
+				key := strings.TrimSpace(parts[1])
+				publicURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
+				video.VideoURL = &publicURL
+			} else if strings.HasPrefix(*video.VideoURL, "https://LOCAL/") {
+				path := strings.TrimPrefix(*video.VideoURL, "https://LOCAL/")
+				publicURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, path)
+				video.VideoURL = &publicURL
+			}
 		}
 		videos[i] = video
 	}

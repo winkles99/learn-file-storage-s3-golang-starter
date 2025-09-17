@@ -35,7 +35,7 @@ func main() {
 
 	pathToDB := os.Getenv("DB_PATH")
 	if pathToDB == "" {
-		log.Fatal("DB_URL must be set")
+		log.Fatal("DB_PATH must be set")
 	}
 
 	db, err := database.NewClient(pathToDB)
