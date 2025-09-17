@@ -97,13 +97,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Reopen temp file for S3 upload
-	tempFileForUpload, err := os.Open(tempFile.Name())
+	// Process file for fast start (move moov atom) and open processed file for upload
+	processedPath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to reopen temp file for upload", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video for fast start", err)
 		return
 	}
-	defer tempFileForUpload.Close()
+	defer os.Remove(processedPath)
+
+	processedFile, err := os.Open(processedPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to open processed file for upload", err)
+		return
+	}
+	defer processedFile.Close()
 
 	// Generate random 32-byte hex filename for S3 key
 	var rnd [32]byte
@@ -111,14 +118,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Failed to generate random filename", err)
 		return
 	}
-	hexName := fmt.Sprintf("%x.mp4", rnd)
-	s3Key := hexName
+	// Determine aspect ratio of the saved temp file and choose prefix
+	aspect, err := getVideoAspectRatio(tempFile.Name())
+	prefix := "other"
+	if err == nil {
+		if aspect == "16:9" {
+			prefix = "landscape"
+		} else if aspect == "9:16" {
+			prefix = "portrait"
+		}
+	}
+	s3Key := fmt.Sprintf("%s/%x.mp4", prefix, rnd)
 
 	// Upload to S3
 	putInput := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &s3Key,
-		Body:        tempFileForUpload,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	}
 	_, err = cfg.s3Client.PutObject(context.Background(), putInput)
